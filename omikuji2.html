@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>おみくじ</title>
+<style>
+  /* 基本設定：余白の確保と無彩色による構成 */
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: #fcfcfc;
+    color: #111;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    text-align: center;
+    overflow-x: hidden;
+  }
+
+  /* 画面状態の切り替え制御 */
+  .screen {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+  }
+  .screen.active {
+    display: flex;
+    opacity: 1;
+  }
+
+  /* 操作ボタンのデザイン */
+  .start-btn {
+    background-color: #111;
+    color: #fff;
+    border: none;
+    padding: 16px 32px;
+    font-size: 16px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+  }
+  .start-btn:active {
+    background-color: #555;
+  }
+
+  /* おみくじ箱と演出要素のデザイン */
+  .omikuji-container {
+    position: relative;
+    width: 80px;
+    height: 140px;
+    margin-bottom: 40px;
+  }
+  .box {
+    position: absolute;
+    bottom: 0;
+    width: 80px;
+    height: 120px;
+    background-color: #222;
+    z-index: 2;
+  }
+  /* 振っている際のアニメーション */
+  .shaking .box {
+    animation: shake 0.3s infinite;
+  }
+  @keyframes shake {
+    0% { transform: rotate(0deg); }
+    25% { transform: rotate(15deg); }
+    50% { transform: rotate(0deg); }
+    75% { transform: rotate(-15deg); }
+    100% { transform: rotate(0deg); }
+  }
+
+  /* 出現するおみくじ（棒）のデザイン */
+  .stick {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 12px;
+    height: 90px;
+    background-color: #e0e0e0;
+    z-index: 1;
+    transition: bottom 1s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .stick.appear {
+    bottom: 100px; /* 箱から飛び出す位置 */
+  }
+
+  /* テキストおよび動画領域の余白設定 */
+  .instruction {
+    font-size: 14px;
+    letter-spacing: 1px;
+    color: #666;
+  }
+  .result-text {
+    font-size: 32px;
+    font-weight: 300;
+    letter-spacing: 4px;
+    margin: 30px 0;
+  }
+  .video-container {
+    width: 100%;
+    max-width: 560px;
+    aspect-ratio: 16 / 9;
+    background-color: #000;
+    margin-top: 20px;
+  }
+  iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+</style>
+</head>
+<body>
+
+  <!-- 初期画面：センサー許可要求 -->
+  <div id="start-screen" class="screen active">
+    <button id="start-btn" class="start-btn">開始する</button>
+  </div>
+
+  <!-- 待機画面：シェイク指示とおみくじ箱 -->
+  <div id="shake-screen" class="screen">
+    <div class="omikuji-container" id="omikuji-container">
+      <div class="stick" id="stick"></div>
+      <div class="box"></div>
+    </div>
+    <div class="instruction">スマートフォンを振ってください</div>
+  </div>
+
+  <!-- 結果画面：運勢と動画 -->
+  <div id="result-screen" class="screen">
+    <div class="result-text" id="fortune-name"></div>
+    <div class="video-container" id="video-area"></div>
+  </div>
+
+  <script>
+    // 運勢データ（合計が厳密に1.0になるよう調整済み）
+    const fortunes = [
+      { name: 'DEAD', videoId: 'DUMMY_ID_1', probability: 0.1667 },
+      { name: '凶', videoId: 'DUMMY_ID_2', probability: 0.1667 },
+      { name: '小吉', videoId: 'DUMMY_ID_3', probability: 0.1667 },
+      { name: '吉', videoId: 'DUMMY_ID_4', probability: 0.1667 },
+      { name: '大吉', videoId: 'DUMMY_ID_5', probability: 0.1667 },
+      { name: '神', videoId: 'DUMMY_ID_6', probability: 0.1665 }
+    ];
+
+    const startBtn = document.getElementById('start-btn');
+    const startScreen = document.getElementById('start-screen');
+    const shakeScreen = document.getElementById('shake-screen');
+    const resultScreen = document.getElementById('result-screen');
+    const omikujiContainer = document.getElementById('omikuji-container');
+    const stick = document.getElementById('stick');
+    const fortuneName = document.getElementById('fortune-name');
+    const videoArea = document.getElementById('video-area');
+
+    let isShaking = false;
+    let isDrawn = false;
+
+    // 画面切り替え処理
+    function switchScreen(hideElement, showElement) {
+      hideElement.classList.remove('active');
+      setTimeout(() => {
+        showElement.classList.add('active');
+      }, 800); // フェードアウト後の待機時間
+    }
+
+    // センサー許可要求とイベントリスナー登録
+    startBtn.addEventListener('click', () => {
+      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        // iOS 13以降の処理
+        DeviceMotionEvent.requestPermission()
+          .then(permissionState => {
+            if (permissionState === 'granted') {
+              window.addEventListener('devicemotion', handleMotion);
+              switchScreen(startScreen, shakeScreen);
+            } else {
+              alert('センサーの使用が許可されませんでした。');
+            }
+          })
+          .catch(console.error);
+      } else {
+        // iOS 13未満、またはAndroid等の処理
+        window.addEventListener('devicemotion', handleMotion);
+        switchScreen(startScreen, shakeScreen);
+      }
+    });
+
+    // 加速度センサーから振る動作を検知する処理
+    function handleMotion(event) {
+      if (isDrawn) return;
+
+      const acc = event.accelerationIncludingGravity;
+      if (!acc) return;
+
+      // X, Y, Z軸の加速度の絶対値の合計を算出
+      const totalAcceleration = Math.abs(acc.x) + Math.abs(acc.y) + Math.abs(acc.z);
+      const threshold = 30; // 振りを判定する閾値
+
+      if (totalAcceleration > threshold && !isShaking) {
+        isShaking = true;
+        omikujiContainer.classList.add('shaking');
+
+        // 一定時間振った後に結果を出力する
+        setTimeout(() => {
+          drawFortune();
+        }, 1000);
+      }
+    }
+
+    // 抽選およびアニメーション実行処理
+    function drawFortune() {
+      isDrawn = true;
+      window.removeEventListener('devicemotion', handleMotion);
+      omikujiContainer.classList.remove('shaking');
+      stick.classList.add('appear'); // おみくじの棒を出すアニメーション
+
+      // 抽選計算
+      const randomValue = Math.random();
+      let cumulativeProbability = 0;
+      let result = fortunes[fortunes.length - 1];
+
+      for (let i = 0; i < fortunes.length; i++) {
+        cumulativeProbability += fortunes[i].probability;
+        if (randomValue < cumulativeProbability) {
+          result = fortunes[i];
+          break;
+        }
+      }
+
+      // 結果画面の構築と表示
+      setTimeout(() => {
+        fortuneName.textContent = result.name;
+        videoArea.innerHTML = `<iframe src="https://www.youtube.com/embed/${result.videoId}?autoplay=1" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+        switchScreen(shakeScreen, resultScreen);
+      }, 1500); // 棒が出現した後に画面を切り替える
+    }
+  </script>
+</body>
+</html>
