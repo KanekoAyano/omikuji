@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>おみくじ</title>
 <style>
-  /* 基本設定：余白の確保と無彩色による構成 */
   body {
     margin: 0;
     padding: 0;
@@ -18,23 +17,22 @@
     justify-content: center;
     min-height: 100vh;
     text-align: center;
-    overflow-x: hidden;
+    overflow: hidden;
   }
 
-  /* 画面状態の切り替え制御 */
   .screen {
     display: none;
     flex-direction: column;
     align-items: center;
     opacity: 0;
     transition: opacity 0.8s ease;
+    width: 100%;
   }
   .screen.active {
     display: flex;
     opacity: 1;
   }
 
-  /* 操作ボタンのデザイン */
   .start-btn {
     background-color: #111;
     color: #fff;
@@ -45,11 +43,11 @@
     cursor: pointer;
     transition: background-color 0.3s;
   }
-  .start-btn:active {
-    background-color: #555;
-  }
 
-  /* おみくじ箱と演出要素のデザイン */
+  /* おみくじ箱と演出要素 */
+  .omikuji-wrapper {
+    transition: transform 1.5s cubic-bezier(0.25, 1, 0.5, 1);
+  }
   .omikuji-container {
     position: relative;
     width: 80px;
@@ -64,7 +62,8 @@
     background-color: #222;
     z-index: 2;
   }
-  /* 振っている際のアニメーション */
+  
+  /* 振るアニメーション */
   .shaking .box {
     animation: shake 0.3s infinite;
   }
@@ -76,28 +75,51 @@
     100% { transform: rotate(0deg); }
   }
 
-  /* 出現するおみくじ（棒）のデザイン */
+  /* 御籤（棒）と文字 */
   .stick {
     position: absolute;
     bottom: 0;
     left: 50%;
     transform: translateX(-50%);
-    width: 12px;
-    height: 90px;
+    width: 20px;
+    height: 100px;
     background-color: #e0e0e0;
     z-index: 1;
     transition: bottom 1s cubic-bezier(0.2, 0.8, 0.2, 1);
+    display: flex;
+    justify-content: center;
+    padding-top: 10px;
+    box-sizing: border-box;
   }
   .stick.appear {
-    bottom: 100px; /* 箱から飛び出す位置 */
+    bottom: 110px; 
+  }
+  .stick-text {
+    writing-mode: vertical-rl;
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: #111;
+    opacity: 0;
+    transition: opacity 1s ease;
+  }
+  .stick-text.show {
+    opacity: 1;
   }
 
-  /* テキストおよび動画領域の余白設定 */
+  /* ズーム時の制御 */
+  .omikuji-wrapper.zoom {
+    transform: scale(4) translateY(20px);
+  }
+
   .instruction {
     font-size: 14px;
     letter-spacing: 1px;
     color: #666;
+    transition: opacity 0.5s;
   }
+  
+  /* 最終結果と動画領域 */
   .result-text {
     font-size: 32px;
     font-weight: 300;
@@ -116,32 +138,42 @@
     height: 100%;
     border: none;
   }
+  .notice {
+    font-size: 12px;
+    color: #999;
+    margin-top: 20px;
+  }
 </style>
 </head>
 <body>
 
-  <!-- 初期画面：センサー許可要求 -->
-  <div id="start-screen" class="screen active">
+  <!-- 初期画面 -->
+  <div id="start-screen" class="screen">
     <button id="start-btn" class="start-btn">開始する</button>
   </div>
 
-  <!-- 待機画面：シェイク指示とおみくじ箱 -->
+  <!-- 待機・演出画面 -->
   <div id="shake-screen" class="screen">
-    <div class="omikuji-container" id="omikuji-container">
-      <div class="stick" id="stick"></div>
-      <div class="box"></div>
+    <div class="omikuji-wrapper" id="omikuji-wrapper">
+      <div class="omikuji-container" id="omikuji-container">
+        <div class="stick" id="stick">
+          <div class="stick-text" id="stick-text"></div>
+        </div>
+        <div class="box"></div>
+      </div>
     </div>
-    <div class="instruction">スマートフォンを振ってください</div>
+    <div class="instruction" id="instruction">スマートフォンを振ってください</div>
   </div>
 
-  <!-- 結果画面：運勢と動画 -->
+  <!-- 動画再生画面 -->
   <div id="result-screen" class="screen">
     <div class="result-text" id="fortune-name"></div>
     <div class="video-container" id="video-area"></div>
+    <div class="notice" id="already-drawn-notice" style="display:none;">※既に引かれたおみくじの結果を表示しています</div>
   </div>
 
   <script>
-    // 運勢データ（合計が厳密に1.0になるよう調整済み）
+    // 運勢データ
     const fortunes = [
       { name: 'DEAD', videoId: 'DUMMY_ID_1', probability: 0.1667 },
       { name: '凶', videoId: 'DUMMY_ID_2', probability: 0.1667 },
@@ -151,30 +183,35 @@
       { name: '神', videoId: 'DUMMY_ID_6', probability: 0.1665 }
     ];
 
-    const startBtn = document.getElementById('start-btn');
     const startScreen = document.getElementById('start-screen');
     const shakeScreen = document.getElementById('shake-screen');
     const resultScreen = document.getElementById('result-screen');
-    const omikujiContainer = document.getElementById('omikuji-container');
-    const stick = document.getElementById('stick');
-    const fortuneName = document.getElementById('fortune-name');
-    const videoArea = document.getElementById('video-area');
+    
+    // ページ読み込み時の処理（localStorageの確認）
+    window.onload = () => {
+      const savedResult = localStorage.getItem('omikuji_result');
+      if (savedResult) {
+        // 既に引いている場合は結果画面を直接表示
+        const result = JSON.parse(savedResult);
+        showFinalVideo(result, true);
+      } else {
+        // まだ引いていない場合は初期画面を表示
+        startScreen.classList.add('active');
+      }
+    };
 
     let isShaking = false;
     let isDrawn = false;
 
-    // 画面切り替え処理
     function switchScreen(hideElement, showElement) {
       hideElement.classList.remove('active');
       setTimeout(() => {
         showElement.classList.add('active');
-      }, 800); // フェードアウト後の待機時間
+      }, 800);
     }
 
-    // センサー許可要求とイベントリスナー登録
-    startBtn.addEventListener('click', () => {
+    document.getElementById('start-btn').addEventListener('click', () => {
       if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        // iOS 13以降の処理
         DeviceMotionEvent.requestPermission()
           .then(permissionState => {
             if (permissionState === 'granted') {
@@ -186,41 +223,34 @@
           })
           .catch(console.error);
       } else {
-        // iOS 13未満、またはAndroid等の処理
         window.addEventListener('devicemotion', handleMotion);
         switchScreen(startScreen, shakeScreen);
       }
     });
 
-    // 加速度センサーから振る動作を検知する処理
     function handleMotion(event) {
       if (isDrawn) return;
-
       const acc = event.accelerationIncludingGravity;
       if (!acc) return;
 
-      // X, Y, Z軸の加速度の絶対値の合計を算出
       const totalAcceleration = Math.abs(acc.x) + Math.abs(acc.y) + Math.abs(acc.z);
-      const threshold = 30; // 振りを判定する閾値
+      const threshold = 30; 
 
       if (totalAcceleration > threshold && !isShaking) {
         isShaking = true;
-        omikujiContainer.classList.add('shaking');
+        document.getElementById('omikuji-container').classList.add('shaking');
 
-        // 一定時間振った後に結果を出力する
+        // 1秒間振った後に抽選を開始
         setTimeout(() => {
-          drawFortune();
+          executeAnimationSequence();
         }, 1000);
       }
     }
 
-    // 抽選およびアニメーション実行処理
-    function drawFortune() {
+    function executeAnimationSequence() {
       isDrawn = true;
       window.removeEventListener('devicemotion', handleMotion);
-      omikujiContainer.classList.remove('shaking');
-      stick.classList.add('appear'); // おみくじの棒を出すアニメーション
-
+      
       // 抽選計算
       const randomValue = Math.random();
       let cumulativeProbability = 0;
@@ -234,12 +264,50 @@
         }
       }
 
-      // 結果画面の構築と表示
+      // 結果を端末に保存
+      localStorage.setItem('omikuji_result', JSON.stringify(result));
+
+      const wrapper = document.getElementById('omikuji-wrapper');
+      const container = document.getElementById('omikuji-container');
+      const stick = document.getElementById('stick');
+      const stickText = document.getElementById('stick-text');
+      const instruction = document.getElementById('instruction');
+
+      // 1. 振る動作の停止と指示テキストの消去
+      container.classList.remove('shaking');
+      instruction.style.opacity = '0';
+
+      // 2. 御籤（棒）が出る
+      stick.classList.add('appear');
+
       setTimeout(() => {
-        fortuneName.textContent = result.name;
-        videoArea.innerHTML = `<iframe src="https://www.youtube.com/embed/${result.videoId}?autoplay=1" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+        // 3. おみくじにズームする
+        wrapper.classList.add('zoom');
+
+        setTimeout(() => {
+          // 4. 運勢を確認する（棒の上に文字が浮き出る）
+          stickText.textContent = result.name;
+          stickText.classList.add('show');
+
+          setTimeout(() => {
+            // 5. 動画画面へ遷移
+            showFinalVideo(result, false);
+          }, 2500); // 運勢を確認する時間を確保（2.5秒）
+        }, 1500); // ズーム完了を待つ時間
+      }, 1000); // 棒が出切るのを待つ時間
+    }
+
+    function showFinalVideo(result, isRevisit) {
+      document.getElementById('fortune-name').textContent = result.name;
+      document.getElementById('video-area').innerHTML = `<iframe src="https://www.youtube.com/embed/${result.videoId}?autoplay=1" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+      
+      if (isRevisit) {
+        document.getElementById('already-drawn-notice').style.display = 'block';
+        startScreen.classList.remove('active');
+        resultScreen.classList.add('active');
+      } else {
         switchScreen(shakeScreen, resultScreen);
-      }, 1500); // 棒が出現した後に画面を切り替える
+      }
     }
   </script>
 </body>
