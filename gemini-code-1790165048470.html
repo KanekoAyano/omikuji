@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>おみくじシステム - 完成版</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background-color: #000;
+            overflow: hidden;
+            color: #fff;
+        }
+
+        /* --- 背景ステージ --- */
+        #stage {
+            position: absolute;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            /* 背景画像に nc232813.jpg を指定 */
+            background-image: url('nc232813.jpg');
+            background-size: cover;
+            background-position: center;
+            z-index: 0;
+            transition: filter 1s ease, transform 1s ease;
+        }
+        
+        /* ズームアップ時の背景演出 */
+        .dim-background {
+            filter: brightness(0.2) blur(8px);
+            transform: scale(1.05);
+        }
+
+        /* --- おみくじ領域 --- */
+        #omikuji-area {
+            position: absolute;
+            bottom: 5%; left: 50%;
+            transform: translateX(-50%);
+            width: 220px;
+            z-index: 10;
+            cursor: pointer;
+        }
+
+        /* 筒の画像 */
+        #cylinder {
+            width: 100%;
+            height: auto;
+            display: block;
+            position: relative;
+            z-index: 5;
+        }
+
+        /* 筒の揺れアニメーション */
+        .shake { animation: shaking 0.5s ease-in-out; }
+        @keyframes shaking {
+            0%, 100% { transform: translateX(0) rotate(0); }
+            20%, 60% { transform: translateX(-12px) rotate(-6deg); }
+            40%, 80% { transform: translateX(12px) rotate(6deg); }
+        }
+
+        /* --- 運勢の棒 --- */
+        #stick-container {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 32px;
+            height: 160px;
+            z-index: 2;
+            perspective: 1000px;
+            
+            opacity: 0;
+            visibility: hidden;
+            transition: transform 0.8s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.2s ease, width 0.8s, height 0.8s, top 0.8s;
+        }
+        
+        .stick-body {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transform-style: preserve-3d;
+            transition: transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        /* 棒の裏面（抽出直後に見える無地の面） */
+        .stick-front {
+            position: absolute;
+            width: 100%; height: 100%;
+            background: linear-gradient(to right, #d4b185, #f5deb3, #c8a172);
+            border-radius: 4px;
+            backface-visibility: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+
+        /* 棒の表面（反転して見える運勢の面） */
+        .stick-back {
+            position: absolute;
+            width: 100%; height: 100%;
+            background: linear-gradient(to right, #d4b185, #f5deb3, #c8a172);
+            border-radius: 4px;
+            backface-visibility: hidden;
+            transform: rotateY(180deg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+
+        #result-text {
+            writing-mode: vertical-rl;
+            text-orientation: upright;
+            font-size: 1.8rem;
+            font-weight: 900;
+            color: #111;
+            letter-spacing: 0.15em;
+        }
+
+        /* --- 状態遷移 --- */
+        .pull-out {
+            opacity: 1 !important;
+            visibility: visible !important;
+            transform: translate(-50%, -150px) !important;
+        }
+        
+        .zoom-in {
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            width: 90px !important;
+            height: 420px !important;
+            z-index: 100 !important;
+        }
+        .zoom-in #result-text {
+            font-size: 4rem !important;
+        }
+
+        .flip-stick {
+            transform: rotateY(180deg);
+        }
+
+        /* --- 動画再生画面 --- */
+        #video-screen {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: #000;
+            z-index: 200;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            transition: opacity 0.8s ease;
+        }
+        video {
+            width: 100%;
+            max-width: 600px;
+            max-height: 80vh;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="stage"></div>
+
+    <div id="omikuji-area" onclick="startOmikuji()">
+        <div id="stick-container">
+            <div class="stick-body" id="stick-body">
+                <div class="stick-front"></div>
+                <div class="stick-back">
+                    <span id="result-text"></span>
+                </div>
+            </div>
+        </div>
+        <img id="cylinder" src="6d020100-8f48-4c6b-a573-30d2fbfde7d1-removebg-preview.png" alt="おみくじ筒">
+    </div>
+
+    <div id="video-screen">
+        <video id="result-video" controls playsinline></video>
+    </div>
+
+    <script>
+        // 運勢パターン
+        const fortunes = [
+            { result: "神", videoSrc: "video_kami.mp4" },
+            { result: "大吉", videoSrc: "video_daikichi.mp4" },
+            { result: "中吉", videoSrc: "video_chukichi.mp4" },
+            { result: "吉", videoSrc: "video_kichi.mp4" },
+            { result: "凶", videoSrc: "video_kyo.mp4" },
+            { result: "大凶", videoSrc: "video_daikyo.mp4" },
+            { result: "DEATH", videoSrc: "video_death.mp4" }
+        ];
+
+        let isAnimating = false;
+
+        function startOmikuji() {
+            if (isAnimating) return;
+            isAnimating = true;
+
+            const randomIndex = Math.floor(Math.random() * fortunes.length);
+            const selected = fortunes[randomIndex];
+            document.getElementById("result-text").innerText = selected.result;
+
+            const area = document.getElementById("omikuji-area");
+            const stickContainer = document.getElementById("stick-container");
+            const stickBody = document.getElementById("stick-body");
+            const stage = document.getElementById("stage");
+
+            area.classList.add("shake");
+
+            setTimeout(() => {
+                area.classList.remove("shake");
+                stickContainer.classList.add("pull-out");
+            }, 600);
+
+            setTimeout(() => {
+                stage.classList.add("dim-background");
+                stickContainer.classList.add("zoom-in");
+            }, 1600);
+
+            setTimeout(() => {
+                stickBody.classList.add("flip-stick");
+            }, 2600);
+
+            setTimeout(() => {
+                const videoScreen = document.getElementById("video-screen");
+                const videoElement = document.getElementById("result-video");
+                
+                videoElement.src = selected.videoSrc;
+                videoScreen.style.
